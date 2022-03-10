@@ -14,8 +14,8 @@ echoclient1: echoclient1.c eznet.c
 echoclient2: echoclient2.c eznet.c
 	gcc -g -std=gnu11 -fsanitize=address -Wall -Werror -DSHOW_LOG_ERROR -oechoclient2 echoclient2.c eznet.c
 
-webserver: webserver.c eznet.c
-	gcc -g -std=gnu11 -fsanitize=address -Wall -Werror -DSHOW_LOG_ERROR -oechoserver webserver.c eznet.c
+webserver: webserver.o eznet.o utils.o
+	gcc -g -std=gnu11 -fsanitize=address -Wall -Werror -DSHOW_LOG_ERROR -owebserver webserver.o eznet.o utils.o
 
 echoserver_fork: echoserver_fork.c eznet.c
 	gcc -g -std=gnu11 -fsanitize=address -Wall -Werror -DSHOW_LOG_ERROR -oechoserver_fork echoserver_fork.c eznet.c
