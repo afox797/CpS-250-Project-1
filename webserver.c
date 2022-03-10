@@ -14,27 +14,7 @@
 #include <signal.h>     // Signal handling system calls (sigaction(2))
 
 #include "eznet.h"      // Custom networking library
-
-// Generic log-to-stdout logging routine
-// Message format: "timestamp:pid:user-defined-message"
-void blog(const char *fmt, ...) {
-    // Convert user format string and variadic args into a fixed string buffer
-    char user_msg_buff[256];
-    va_list vargs;
-    va_start(vargs, fmt);
-    vsnprintf(user_msg_buff, sizeof(user_msg_buff), fmt, vargs);
-    va_end(vargs);
-
-    // Get the current time as a string
-    time_t t = time(NULL);
-    struct tm *tp = localtime(&t);
-    char timestamp[64];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tp);
-
-    // Print said string to STDOUT prefixed by our timestamp and pid indicators
-    printf("%s:%d:%s\n", timestamp, getpid(), user_msg_buff);
-    fflush(stdout);
-}
+#include "utils.h"
 
 // GLOBAL: settings structure instance
 struct settings {
@@ -83,7 +63,7 @@ void sigint_handler(int signum) {
 // then tears down connection.
 void handle_client(struct client_info *client) {
     FILE *stream = NULL;
-
+	char *line = NULL;
     // Wrap the socket file descriptor in a read/write FILE stream
     // so we can use tasty stdio functions like getline(3)
     // [dup(2) the file descriptor so that we don't double-close;
@@ -92,15 +72,16 @@ void handle_client(struct client_info *client) {
     if ((stream = fdopen(dup(client->fd), "r+"))== NULL) {
         perror("unable to wrap socket");
         goto cleanup;
-    }
+    } else {
+
+	}
 
     // Echo all lines
-    char *line = NULL;
     size_t len = 0u;
     ssize_t recd;
     while ((recd = getline(&line, &len, stream)) > 0) {
         printf("\tReceived %zd byte line; echoing...\n", recd);
-        fputs(line, stream); 
+        fputs(line, stream);
     }
 
 cleanup:
