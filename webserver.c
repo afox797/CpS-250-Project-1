@@ -60,9 +60,6 @@ int parse_options(int argc, char * const argv[]) {
             case 'p':
                 g_settings.bindport = optarg;
                 break;
-            case 'r':
-                g_settings.directory = optarg;
-                break;
             default:
                 // Unexpected argument--abort parsing
                 goto cleanup;
