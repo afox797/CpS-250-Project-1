@@ -15,9 +15,11 @@
 #include <unistd.h>     // Standard system calls
 #include <signal.h>     // Signal handling system calls (sigaction(2))
 #include <dirent.h>
+#include <search.h>
 
 #include "eznet.h"      // Custom networking library
 #include "utils.h"
+#include "hash.h"
 
 #define RC_OK 1
 #define RC_ILLEGAL_STREAM -1
@@ -27,6 +29,14 @@
 #define RC_ILLEGAL_PATH -5
 #define RC_MISSING_VERSION -6
 #define RC_OTHER_ERR -7
+
+#define FILE_NOT_FOUND -1
+#define OTHER_ERROR -2
+
+Hash_table* dict;
+
+static char* keys[] = {"gif", "jpg", "jpeg", "png", "css", "txt"};
+static char* values[] = {"image/gif", "image/jpeg", "image/jpeg", "image/png", "text/css", "text/plain"};
 
 // GLOBAL: settings structure instance
 struct settings {
@@ -45,6 +55,11 @@ typedef struct http_request {
     char *version;
 } http_request_t;
 
+void init_hash_table(Hash_table **table) {
+    for (int i = 0; i < 6; i++) {
+        ht_insert(*table, keys[i], values[i]);
+    }
+}
 
 // Parse commandline options and sets g_settings accordingly.
 // Returns 0 on success, -1 on false...
@@ -92,7 +107,8 @@ int parseHttp(FILE *in, http_request_t **request)
     http_request_t *req = NULL;
     int rc = RC_OTHER_ERR;
     char *result;
-    int BUFFER_SIZE = 400;
+    int BUFFER_SIZE = 250;
+    int STR_BUFFER = 150;
 
     char illegalChars[] = "\"\\\\~\\\"`!@#$%^&*()-_=+[{]}|;:'<>?,\"";
 
@@ -104,9 +120,14 @@ int parseHttp(FILE *in, http_request_t **request)
     char *info_ptr;
 
     fgets(buffer, BUFFER_SIZE, in);
-    req -> verb = strdup(strtok_r(buffer, " ", &info_ptr)); // assigning value to verb from the struct
-    req -> path = strdup(strtok_r(NULL, " ", &info_ptr)); // strtok_r requires using NULL after first call
-    req -> version = strdup(strtok_r(NULL, " ", &info_ptr));
+
+    req -> verb = malloc(STR_BUFFER);
+    req -> path = malloc(STR_BUFFER);
+    req -> version = malloc(STR_BUFFER);
+    strlcpy(req -> verb, (strtok_r(buffer, " ", &info_ptr)), STR_BUFFER); // assigning value to verb from the struct
+    strlcpy(req -> path, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // strtok_r requires using NULL after first call
+    strlcpy(req -> version, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // strtok_r requires using NULL after first call
+    printf("at parseHttp: %s %s %s\n", req -> verb, req -> path, req -> version);
 
     if (strcmp(req -> verb, "GET") == 0) {
     } else {
@@ -134,7 +155,6 @@ int parseHttp(FILE *in, http_request_t **request)
         }
     }
 
-
     if (feof(in)) {
         rc = RC_ILLEGAL_STREAM;
     }
@@ -142,7 +162,6 @@ int parseHttp(FILE *in, http_request_t **request)
     if (ferror(in)) {
         rc = RC_IO_ERROR;
     }
-
 
     blog("Path requested: %s\n", req->path);
     if (rc == RC_OTHER_ERR) {
@@ -154,11 +173,72 @@ int parseHttp(FILE *in, http_request_t **request)
     return rc;
 }
 
+
+// prints out the HTTP response to the client if the file exists and the request is valid
+void print_http_ok(FILE *stream, FILE *opened_file, http_request_t *request, char *extension)
+{
+    char *buffer = NULL;
+    if ((buffer = malloc(1024)) == NULL) {
+        blog("malloc failed");
+        goto cleanup;
+    }
+
+    fprintf(stream, "HTTP/1.0 200 OK\n");
+    fprintf(stream, "Content-type: %s\n", extension);
+    fprintf(stream, "\r\n");
+    if (strcmp(request->path, "/") == 0) {
+        fprintf(stream, "Requested file: %s%s\n", g_settings.directory, request->path);
+        fprintf(stream, "Welcome to my server.\n");
+        fprintf(stream, "Request verb: %s\n", request->verb);
+    } else {
+        while (feof(opened_file) == 0) {
+            unsigned long long chunk_read = fread(buffer, 1, 400, opened_file);
+            fwrite(buffer, 1, chunk_read, stream);
+        }
+
+    }
+
+cleanup:
+    free(buffer);
+    if (opened_file != NULL) {
+        fclose(opened_file);
+    }
+}
+
+// prints out the HTTP response to the client if the file does not exist or the request is invalid
+void print_http_failure(FILE *stream, int error_type, char *extension)
+{
+    if (error_type == FILE_NOT_FOUND) {
+        fprintf(stream, "HTTP/1.0 404 Not Found\n");
+        fprintf(stream, "Content-type: %s\n", extension);
+        fprintf(stream, "\r\n");
+        fprintf(stream, "Error 404: Specified file not found and could not be open.\n");
+
+    } else if (error_type == OTHER_ERROR) {
+        fprintf(stream, "HTTP/1.0 400 Bad Request\n");
+        fprintf(stream, "Content-type: %s\n", extension);
+        fprintf(stream, "\r\n");
+        fprintf(stream, "I did not understand your request\n");
+    }
+}
+
+char *get_content_type(char *extension) {
+    char *type = NULL;
+    type = ht_search(dict, extension);
+    if (type == NULL) {
+        return "application/octet-stream";
+    } else {
+        return type;
+    }
+}
+
 // Connection handling logic: reads/echos lines of text until error/EOF,
 // then tears down connection.
 void handle_client(struct client_info *client) {
     FILE *stream = NULL;
     http_request_t *request = NULL;
+    char *content_type = NULL;
+
     // Wrap the socket file descriptor in a read/write FILE stream
     // so we can use tasty stdio functions like getline(3)
     // [dup(2) the file descriptor so that we don't double-close;
@@ -167,28 +247,34 @@ void handle_client(struct client_info *client) {
     if ((stream = fdopen(dup(client->fd), "r+"))== NULL) {
         perror("unable to wrap socket");
         goto cleanup;
-    } else {
-
-	}
+    } else {}
 
     int http_result = parseHttp(stream, &request);
 
-    if (http_result == 1) {
-        fprintf(stream,"HTTP/1.0 200 OK\n");
-        fprintf(stream,"Content-type: text/plain\n");
-        fprintf(stream, "\r\n");
-        fprintf(stream, "Request verb: %s\n", request->verb);
-        fprintf(stream, "Requested file: %s%s\n", g_settings.directory, request->path);
-    } else {
-        fprintf(stream, "HTTP/1.0 400 Bad Request\n");
-        fprintf(stream, "Content-type: text/plain\n");
-        fprintf(stream, "\r\n");
-        fprintf(stream, "I did not understand your request\n");
+    content_type = get_content_type(request->path);
+
+    // Concatenate the directory and the path to file
+    char *file = malloc(strlen(g_settings.directory) + strlen(request->path) + 1);
+    strlcpy(file, g_settings.directory, strlen(g_settings.directory) + 1);
+    strlcat(file, request->path, strlen(g_settings.directory) + strlen(request->path) + 1);
+
+
+    FILE *opened_file = fopen(file, "r");
+
+    if (opened_file == NULL && strcmp(request->path, "/") != 0) {
+        print_http_failure(stream, FILE_NOT_FOUND, content_type);
     }
+    else if (http_result == 1) {
+        print_http_ok(stream, opened_file, request, content_type);
+    } else {
+        print_http_failure(stream, OTHER_ERROR, content_type);
+    }
+
+    free(file);
     free(request->verb);
     free(request->path);
     free(request->version);
-    free(request);  // It's OK to free() a NULL pointer
+    free(request);
 
 cleanup:
     // Shutdown this client
@@ -197,29 +283,15 @@ cleanup:
     printf("\tSession ended.\n");
 }
 
-// Opens the directory specified in the server start up. TODO: Reimplement for full release.
-// DIR* open_specified_directory(const char *dir) {
-    /*DIR *open_result = opendir(dir);
-    if (open_result == NULL) {
-        printf("error opening specified directory.\n");
-        if (errno == ENONET) {
-            printf("The specified directory does not exist.");
-        } else if (errno == ENOTDIR) {
-            printf("%s is not a directory.", dir);
-        }
-        printf("Opening default directory...");
-        opendir("/home");
-    }
-    return open_result;
-}*/
-
 int main(int argc, char **argv) {
     int ret = 1;
 
     // Network server/client context
     int server_sock = -1;
 
-    DIR *open_directory = NULL;
+    // Initialize the hash table\dictionary
+    dict = create_table(CAPACITY);
+    init_hash_table(&dict);
 
     // Handle our options
     if (parse_options(argc, argv)) {
@@ -264,8 +336,8 @@ int main(int argc, char **argv) {
     ret = 0;
 
 cleanup:
-   // closedir(open_directory);
     if (server_sock >= 0) close(server_sock);
+    free_table(dict);
     return ret;
 }
 
