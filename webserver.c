@@ -6,16 +6,10 @@
 #include <stdlib.h>     // Other standard library functions
 #include <string.h>     // Standard string functions
 #include <errno.h>      // Global errno variable
-#include <sys/types.h>  // opendir function
 #include <bsd/string.h> // Safe string functions
-
-#include <stdarg.h>     // Variadic argument lists (for blog function)
-#include <time.h>       // Time/date formatting function (for blog function)
 
 #include <unistd.h>     // Standard system calls
 #include <signal.h>     // Signal handling system calls (sigaction(2))
-#include <dirent.h>
-#include <search.h>
 
 #include "eznet.h"      // Custom networking library
 #include "utils.h"
@@ -35,7 +29,7 @@
 
 Hash_table* dict;
 
-static char* keys[] = {"gif", "jpg", "jpeg", "png", "css", "txt"};
+static char* keys[] = {".gif", ".jpg", ".jpeg", ".png", ".css", ".txt"};
 static char* values[] = {"image/gif", "image/jpeg", "image/jpeg", "image/png", "text/css", "text/plain"};
 
 // GLOBAL: settings structure instance
@@ -108,9 +102,9 @@ int parseHttp(FILE *in, http_request_t **request)
     int rc = RC_OTHER_ERR;
     char *result;
     int BUFFER_SIZE = 250;
-    int STR_BUFFER = 150;
+    int STR_BUFFER = 500;
 
-    char illegalChars[] = "\"\\\\~\\\"`!@#$%^&*()-_=+[{]}|;:'<>?,\"";
+    char illegalChars[] = "\"\\\\~\\\"`!@#$%^&*()-=+[{]}|;:'<>?,\"";
 
     if ((req = calloc(10, sizeof(http_request_t))) == NULL) {
         rc = RC_MALLOC_FAILURE;
@@ -124,22 +118,26 @@ int parseHttp(FILE *in, http_request_t **request)
     req -> verb = malloc(STR_BUFFER);
     req -> path = malloc(STR_BUFFER);
     req -> version = malloc(STR_BUFFER);
-    strlcpy(req -> verb, (strtok_r(buffer, " ", &info_ptr)), STR_BUFFER); // assigning value to verb from the struct
-    strlcpy(req -> path, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // strtok_r requires using NULL after first call
-    strlcpy(req -> version, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // strtok_r requires using NULL after first call
-    printf("at parseHttp: %s %s %s\n", req -> verb, req -> path, req -> version);
 
+    printf("Made it to copy\n");
+
+    strlcpy(req -> verb, (strtok_r(buffer, " ", &info_ptr)), STR_BUFFER); // assigning value to verb from the struct
     if (strcmp(req -> verb, "GET") == 0) {
     } else {
         rc = RC_ILLEGAL_VERB;
+        goto cleanup;
     }
 
+    strlcpy(req -> path, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // strtok_r requires using NULL after first call
     if (strpbrk(req -> path, illegalChars)) {
         rc = RC_ILLEGAL_PATH;
+        goto cleanup;
     }
 
+    strlcpy(req -> version, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // strtok_r requires using NULL after first call
     if (req -> version == NULL) {
         rc = RC_MISSING_VERSION;
+        goto cleanup;
     }
 
     if (strpbrk(req -> version, " ")) {
@@ -169,6 +167,7 @@ int parseHttp(FILE *in, http_request_t **request)
     }
     *request = req;
 
+cleanup:
     free(buffer);
     return rc;
 }
@@ -222,6 +221,7 @@ void print_http_failure(FILE *stream, int error_type, char *extension)
     }
 }
 
+
 char *get_content_type(char *extension) {
     char *type = NULL;
     type = ht_search(dict, extension);
@@ -238,6 +238,7 @@ void handle_client(struct client_info *client) {
     FILE *stream = NULL;
     http_request_t *request = NULL;
     char *content_type = NULL;
+    char *extension = NULL;
 
     // Wrap the socket file descriptor in a read/write FILE stream
     // so we can use tasty stdio functions like getline(3)
@@ -250,8 +251,16 @@ void handle_client(struct client_info *client) {
     } else {}
 
     int http_result = parseHttp(stream, &request);
+    printf("parseHttp returned %d\n", http_result);
 
-    content_type = get_content_type(request->path);
+    if (request->path == NULL) {
+        print_http_failure(stream, OTHER_ERROR, "text/plain");
+        goto cleanup;
+    }
+
+    extension = strchr(request->path, '.');
+    printf("extension: %s\n", extension);
+    content_type = get_content_type(extension);
 
     // Concatenate the directory and the path to file
     char *file = malloc(strlen(g_settings.directory) + strlen(request->path) + 1);
