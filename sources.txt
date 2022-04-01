@@ -1,2 +1,3 @@
 https://www.journaldev.com/35238/hash-table-in-c-plus-plus#:~:text=A%20Hash%20Table%20in%20C,value%20at%20the%20appropriate%20location.
 https://stackoverflow.com/questions/3217629/how-do-i-find-the-index-of-a-character-within-a-string-in-c#:~:text=Just%20subtract%20the%20string%20address,int)(e%20%2D%20string)%3B
+https://stackoverflow.com/questions/27326839/how-to-read-input-of-unknown-length-using-fgets
