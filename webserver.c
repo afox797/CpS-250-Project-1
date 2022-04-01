@@ -12,8 +12,8 @@
 #include <signal.h>     // Signal handling system calls (sigaction(2))
 
 #include "eznet.h"      // Custom networking library
-#include "utils.h"
-#include "hash.h"
+#include "utils.h"      // Custom utility functions
+#include "hash.h"       // Custom hash table functions from https://www.journaldev.com/35238/hash-table-in-c-plus-plus#:~:text=A%20Hash%20Table%20in%20C,value%20at%20the%20appropriate%20location.
 
 #define RC_OK 1
 #define RC_ILLEGAL_STREAM -1
@@ -27,6 +27,7 @@
 #define FILE_NOT_FOUND -1
 #define OTHER_ERROR -2
 
+// Global variables
 Hash_table* dict;
 
 static char* keys[] = {".gif", ".jpg", ".jpeg", ".png", ".css", ".txt"};
@@ -49,6 +50,7 @@ typedef struct http_request {
     char *version;
 } http_request_t;
 
+// Fills hash table with predefined keys and values.
 void init_hash_table(Hash_table **table) {
     for (int i = 0; i < 6; i++) {
         ht_insert(*table, keys[i], values[i]);
@@ -109,7 +111,7 @@ int parseHttp(FILE *in, http_request_t **request)
 {
     http_request_t *req = NULL;
     int rc = RC_OTHER_ERR;
-    int BUFFER_SIZE = 400;
+    int BUFFER_SIZE = 250;
     int STR_BUFFER = 500;
     char *line = malloc(1);
     char* result = NULL;
@@ -181,14 +183,6 @@ int parseHttp(FILE *in, http_request_t **request)
         blog("Missing version");
         free_request(req);
         goto cleanup;
-    }
-
-    if (feof(in)) {
-        rc = RC_ILLEGAL_STREAM;
-    }
-
-    if (ferror(in)) {
-        rc = RC_IO_ERROR;
     }
 
     rc = RC_OK;
@@ -285,6 +279,7 @@ void handle_client(struct client_info *client) {
 
     http_result = parseHttp(stream, &request);
     if (http_result != RC_OK) {
+        blog("Error parsing HTTP request");
         print_http_failure(stream, OTHER_ERROR, NULL);
         goto cleanup;
     }
@@ -307,6 +302,7 @@ void handle_client(struct client_info *client) {
     opened_file = fopen(file, "r");
 
     if (opened_file == NULL && strcmp(request->path, "/") != 0) {
+        blog("File not found");
         print_http_failure(stream, FILE_NOT_FOUND, content_type);
     } else {
         print_http_ok_with_file(stream, opened_file, content_type);
@@ -316,7 +312,6 @@ void handle_client(struct client_info *client) {
     free(file);
 
 cleanup:
-
     // Shutdown this client
     if (stream) fclose(stream);
     destroy_client_info(client);
