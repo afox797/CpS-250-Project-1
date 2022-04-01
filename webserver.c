@@ -6,20 +6,14 @@
 #include <stdlib.h>     // Other standard library functions
 #include <string.h>     // Standard string functions
 #include <errno.h>      // Global errno variable
-#include <sys/types.h>  // opendir function
 #include <bsd/string.h> // Safe string functions
-
-#include <stdarg.h>     // Variadic argument lists (for blog function)
-#include <time.h>       // Time/date formatting function (for blog function)
 
 #include <unistd.h>     // Standard system calls
 #include <signal.h>     // Signal handling system calls (sigaction(2))
-#include <dirent.h>
-#include <search.h>
 
 #include "eznet.h"      // Custom networking library
-#include "utils.h"
-#include "hash.h"
+#include "utils.h"      // Custom utility functions
+#include "hash.h"       // Custom hash table functions from https://www.journaldev.com/35238/hash-table-in-c-plus-plus#:~:text=A%20Hash%20Table%20in%20C,value%20at%20the%20appropriate%20location.
 
 #define RC_OK 1
 #define RC_ILLEGAL_STREAM -1
@@ -33,9 +27,10 @@
 #define FILE_NOT_FOUND -1
 #define OTHER_ERROR -2
 
+// Global variables
 Hash_table* dict;
 
-static char* keys[] = {"gif", "jpg", "jpeg", "png", "css", "txt"};
+static char* keys[] = {".gif", ".jpg", ".jpeg", ".png", ".css", ".txt"};
 static char* values[] = {"image/gif", "image/jpeg", "image/jpeg", "image/png", "text/css", "text/plain"};
 
 // GLOBAL: settings structure instance
@@ -55,6 +50,7 @@ typedef struct http_request {
     char *version;
 } http_request_t;
 
+// Fills hash table with predefined keys and values.
 void init_hash_table(Hash_table **table) {
     for (int i = 0; i < 6; i++) {
         ht_insert(*table, keys[i], values[i]);
@@ -64,7 +60,7 @@ void init_hash_table(Hash_table **table) {
 // Parse commandline options and sets g_settings accordingly.
 // Returns 0 on success, -1 on false...
 int parse_options(int argc, char * const argv[]) {
-    int ret = -1; 
+    int ret = -1;
 
     char op;
     while ((op = getopt(argc, argv, "h:p:r:")) > -1) {
@@ -98,6 +94,15 @@ void sigint_handler(int signum) {
     server_running = false;
 }
 
+void free_request(http_request_t *request) {
+    if (request != NULL) {
+        free(request->verb);
+        free(request->path);
+        free(request->version);
+        free(request);
+    }
+}
+
 // Returns RC_OK on success,
 // RC_ILLEGAL_STREAM on invalid HTTP request,
 // RC_IO_ERROR on I/O error,
@@ -106,96 +111,113 @@ int parseHttp(FILE *in, http_request_t **request)
 {
     http_request_t *req = NULL;
     int rc = RC_OTHER_ERR;
-    char *result;
     int BUFFER_SIZE = 250;
-    int STR_BUFFER = 150;
+    int STR_BUFFER = 500;
+    char *line = malloc(1);
+    char* result = NULL;
+    int cur_len = 0;
 
-    char illegalChars[] = "\"\\\\~\\\"`!@#$%^&*()-_=+[{]}|;:'<>?,\"";
-
-    if ((req = calloc(10, sizeof(http_request_t))) == NULL) {
-        rc = RC_MALLOC_FAILURE;
-    }
+    char illegalChars[] = "\"\\\\~\\\"`!@#$%^&*()-=+[{]}|;:'<>?,\"";
 
     char *buffer = malloc(BUFFER_SIZE);
     char *info_ptr;
 
-    fgets(buffer, BUFFER_SIZE, in);
+    while ((result = fgets(buffer, sizeof(buffer), in)) != NULL) {
+        size_t buffer_len = strlen(buffer);
+        char *extra = realloc(line, buffer_len + 1 + cur_len);
+
+        if (extra == 0) {
+            break;
+        }
+
+        line = extra;
+        strlcpy(line + cur_len, buffer, buffer_len + 1);
+        cur_len += buffer_len;
+
+        if (strcmp(result, "\r\n") == 0) {
+            break;
+        }
+    }
+
+    if (result == NULL) {
+        rc = RC_IO_ERROR;
+        blog("No newline found in request");
+        goto cleanup;
+    }
+
+    if (strchr(line, ' ') == NULL) {
+        RC_IO_ERROR;
+        blog("Illegal request, no spaces within request");
+        goto cleanup;
+    }
+
+    if ((req = calloc(10, sizeof(http_request_t))) == NULL) {
+        rc = RC_MALLOC_FAILURE;
+        blog("Calloc failure");
+    }
 
     req -> verb = malloc(STR_BUFFER);
     req -> path = malloc(STR_BUFFER);
     req -> version = malloc(STR_BUFFER);
-    strlcpy(req -> verb, (strtok_r(buffer, " ", &info_ptr)), STR_BUFFER); // assigning value to verb from the struct
-    strlcpy(req -> path, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // strtok_r requires using NULL after first call
-    strlcpy(req -> version, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // strtok_r requires using NULL after first call
-    printf("at parseHttp: %s %s %s\n", req -> verb, req -> path, req -> version);
 
+    strlcpy(req -> verb, (strtok_r(line, " ", &info_ptr)), STR_BUFFER); // assigning value to verb from the struct
     if (strcmp(req -> verb, "GET") == 0) {
     } else {
         rc = RC_ILLEGAL_VERB;
+        blog("Illegal verb provided: %s", req -> verb);
+        free_request(req);
+        goto cleanup;
     }
 
+    strlcpy(req -> path, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // assigning value to path from the struct
     if (strpbrk(req -> path, illegalChars)) {
         rc = RC_ILLEGAL_PATH;
+        blog("Illegal path provided: %s", req -> path);
+        free_request(req);
+        goto cleanup;
     }
 
+    strlcpy(req -> version, (strtok_r(NULL, " ", &info_ptr)), STR_BUFFER); // strtok_r requires using NULL after first call
     if (req -> version == NULL) {
         rc = RC_MISSING_VERSION;
+        blog("Missing version");
+        free_request(req);
+        goto cleanup;
     }
 
-    if (strpbrk(req -> version, " ")) {
-        rc = RC_MISSING_VERSION;
-    }
-
-    while (strcmp((result = fgets(buffer, BUFFER_SIZE, in)), "\r\n") != 0) {
-        if (ferror(in)) {
-            rc = RC_IO_ERROR;
-        }
-        if (result == NULL) {
-            rc = RC_ILLEGAL_STREAM;
-        }
-    }
-
-    if (feof(in)) {
-        rc = RC_ILLEGAL_STREAM;
-    }
-
-    if (ferror(in)) {
-        rc = RC_IO_ERROR;
-    }
-
-    blog("Path requested: %s\n", req->path);
-    if (rc == RC_OTHER_ERR) {
-        rc = RC_OK;
-    }
+    rc = RC_OK;
     *request = req;
 
+cleanup:
+    free(line);
     free(buffer);
     return rc;
 }
 
+// Print the default HTTP response if no file is specified
+void print_http_ok(FILE *stream, http_request_t *request) {
+    fprintf(stream,"HTTP/1.0 200 OK\n");
+    fprintf(stream,"Content-type: text/plain\n");
+    fprintf(stream, "\r\n");
+    fprintf(stream, "Welcome to my server.\n");
+    fprintf(stream, "Request verb: %s\n", request->verb);
+    fprintf(stream, "Requested file: %s%s\n", g_settings.directory, request->path);
+}
 
 // prints out the HTTP response to the client if the file exists and the request is valid
-void print_http_ok(FILE *stream, FILE *opened_file, http_request_t *request, char *extension)
+void print_http_ok_with_file(FILE *stream, FILE *opened_file, char *extension)
 {
     char *buffer = NULL;
     if ((buffer = malloc(1024)) == NULL) {
         blog("malloc failed");
         goto cleanup;
     }
-
     fprintf(stream, "HTTP/1.0 200 OK\n");
     fprintf(stream, "Content-type: %s\n", extension);
     fprintf(stream, "\r\n");
-    if (strcmp(request->path, "/") == 0) {
-        fprintf(stream, "Requested file: %s%s\n", g_settings.directory, request->path);
-        fprintf(stream, "Welcome to my server.\n");
-        fprintf(stream, "Request verb: %s\n", request->verb);
-    } else {
-        while (feof(opened_file) == 0) {
-            unsigned long long chunk_read = fread(buffer, 1, 400, opened_file);
-            fwrite(buffer, 1, chunk_read, stream);
-        }
-
+    while (feof(opened_file) == 0) {
+        unsigned long long chunk_read = fread(buffer, 1, 400, opened_file);
+        fwrite(buffer, 1, chunk_read, stream);
     }
 
 cleanup:
@@ -214,7 +236,7 @@ void print_http_failure(FILE *stream, int error_type, char *extension)
         fprintf(stream, "\r\n");
         fprintf(stream, "Error 404: Specified file not found and could not be open.\n");
 
-    } else if (error_type == OTHER_ERROR) {
+    } else {
         fprintf(stream, "HTTP/1.0 400 Bad Request\n");
         fprintf(stream, "Content-type: %s\n", extension);
         fprintf(stream, "\r\n");
@@ -222,6 +244,7 @@ void print_http_failure(FILE *stream, int error_type, char *extension)
     }
 }
 
+// Gets the content type of the file based on the extension
 char *get_content_type(char *extension) {
     char *type = NULL;
     type = ht_search(dict, extension);
@@ -232,13 +255,18 @@ char *get_content_type(char *extension) {
     }
 }
 
+
+
 // Connection handling logic: reads/echos lines of text until error/EOF,
 // then tears down connection.
 void handle_client(struct client_info *client) {
     FILE *stream = NULL;
+    FILE *opened_file = NULL;
     http_request_t *request = NULL;
     char *content_type = NULL;
-
+    char *extension = NULL;
+    char *file = NULL;
+    int http_result;
     // Wrap the socket file descriptor in a read/write FILE stream
     // so we can use tasty stdio functions like getline(3)
     // [dup(2) the file descriptor so that we don't double-close;
@@ -249,32 +277,39 @@ void handle_client(struct client_info *client) {
         goto cleanup;
     } else {}
 
-    int http_result = parseHttp(stream, &request);
+    http_result = parseHttp(stream, &request);
+    if (http_result != RC_OK) {
+        blog("Error parsing HTTP request");
+        print_http_failure(stream, OTHER_ERROR, NULL);
+        goto cleanup;
+    }
 
-    content_type = get_content_type(request->path);
+    if (strcmp(request->path, "/") == 0) {
+        print_http_ok(stream, request);
+        free_request(request);
+        goto cleanup;
+    }
+
+    extension = strchr(request->path, '.');
+    content_type = get_content_type(extension);
 
     // Concatenate the directory and the path to file
-    char *file = malloc(strlen(g_settings.directory) + strlen(request->path) + 1);
+    file = malloc(strlen(g_settings.directory) + strlen(request->path) + 1);
     strlcpy(file, g_settings.directory, strlen(g_settings.directory) + 1);
     strlcat(file, request->path, strlen(g_settings.directory) + strlen(request->path) + 1);
 
-
-    FILE *opened_file = fopen(file, "r");
+    // Open the file specified in the request
+    opened_file = fopen(file, "r");
 
     if (opened_file == NULL && strcmp(request->path, "/") != 0) {
+        blog("File not found");
         print_http_failure(stream, FILE_NOT_FOUND, content_type);
-    }
-    else if (http_result == 1) {
-        print_http_ok(stream, opened_file, request, content_type);
     } else {
-        print_http_failure(stream, OTHER_ERROR, content_type);
+        print_http_ok_with_file(stream, opened_file, content_type);
     }
 
+    free_request(request);
     free(file);
-    free(request->verb);
-    free(request->path);
-    free(request->version);
-    free(request);
 
 cleanup:
     // Shutdown this client

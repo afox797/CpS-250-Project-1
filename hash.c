@@ -1,7 +1,11 @@
 #include "hash.h"
 
 
-ull hash_function(char *str) {
+ull hash_function(const char *str) {
+    if (str == NULL) {
+        return -1;
+    }
+
     ull i = 0;
     for (int j = 0; str[j]; j++) {
         i += str[j];
@@ -50,10 +54,6 @@ void free_table(Hash_table *table) {
     free(table);
 }
 
-void handle_collision(Hash_table* table, Ht_item* item) {
-
-}
-
 void ht_insert(Hash_table *table, char *key, char *value) {
     int index = hash_function(key);
     Ht_item *item = create_item(key, value);
@@ -71,7 +71,6 @@ void ht_insert(Hash_table *table, char *key, char *value) {
             strlcpy(table->items[index]->value, value, strlen(value) + 1);
             return;
         } else {
-            handle_collision(table, item);
             return;
         }
     }
@@ -79,6 +78,11 @@ void ht_insert(Hash_table *table, char *key, char *value) {
 
 char* ht_search(Hash_table* table, char* key) {
     int index = hash_function(key);
+
+    if (index == -1) {
+        return NULL;
+    }
+
     Ht_item* item = table->items[index];
 
     if (item != NULL) {

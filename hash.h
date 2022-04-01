@@ -23,7 +23,7 @@ struct Hash_table {
 #define CAPACITY 100
 typedef unsigned long long int ull;
 
-ull hash_function(char *str);
+ull hash_function(const char *str);
 Ht_item* create_item(char *key, char *value);
 Hash_table* create_table(int size);
 void free_item(Ht_item *item);
